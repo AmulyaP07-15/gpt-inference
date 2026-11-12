@@ -1,6 +1,8 @@
 import torch
 from transformers import AutoTokenizer,AutoModelForCausalLM
 
+
+
 #STEP1: ENCODE-DECODE using the same tokenizer 
 tokenizer=AutoTokenizer.from_pretrained("gpt2")
 
@@ -30,3 +32,32 @@ model.transformer.wte.weight.shape)
 #wpe is the learned 768 number vector for each of the 1024 supported positions
 print("Position embedding table:",
 model.transformer.wpe.weight.shape)
+
+#look up the token embeddings+position embeddings
+with torch.no_grad():
+    token_embeddings=model.transformer.wte(input_ids)
+    positions=torch.arange(input_ids.shape[1])
+
+    position_embeddings=model.transformer.wpe(positions)
+    x= token_embeddings+position_embeddings
+
+#layernormalization
+ln=model.transformer.h[0].ln_1
+
+#to compare the layer norm func with pytorch uilt in function
+def layer_norm(x, weight, bias, eps=1e-5):
+    mean = x.mean(dim=-1, keepdim=True)
+    variance = x.var(dim=-1, keepdim=True, correction=0)
+
+    normalized = (x - mean) / torch.sqrt(variance + eps)
+    return normalized * weight + bias
+
+
+with torch.no_grad():
+    normalized_x=layer_norm(x,ln.weight,ln.bias,ln.eps)
+
+with torch.no_grad():
+    expected=ln(x)
+    difference=(normalized_x-expected).abs().max()
+
+print("Maximum difference",difference)
