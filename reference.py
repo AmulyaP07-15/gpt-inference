@@ -1,6 +1,6 @@
 import torch
 from transformers import AutoTokenizer,AutoModelForCausalLM
-
+from gpt2 import transformer_block
 
 
 #STEP1: ENCODE-DECODE using the same tokenizer 
@@ -45,6 +45,8 @@ with torch.no_grad():
 
     position_embeddings=model.transformer.wpe(positions)
     x= token_embeddings+position_embeddings
+
+
 
 
 block = model.transformer.h[0]
