@@ -11,13 +11,15 @@ model=AutoModelForCausalLM.from_pretrained("gpt2")
 #to disbale the traning behaviour
 model.eval()
 
+block = model.transformer.h[0]
+
 prompt="The quick brown fox"
 
 #return_tensors="pt" return the output as a tensor 
 input_ids=tokenizer.encode(prompt,return_tensors="pt")
 
 #the projection.weight  combines w_q,w_k,w_v
-projection=model.transformer.h[0].attn.c_attn
+projection=block.attn.c_attn
 
 print("Token IDs:", input_ids)
 print("Shape :",input_ids.shape)
@@ -44,8 +46,12 @@ with torch.no_grad():
     position_embeddings=model.transformer.wpe(positions)
     x= token_embeddings+position_embeddings
 
+
+block = model.transformer.h[0]
+
+
 #layernormalization
-ln=model.transformer.h[0].ln_1
+ln=block.ln_1
 
 #to compare the layer norm func with pytorch uilt in function
 def layer_norm(x, weight, bias, eps=1e-5):
@@ -145,7 +151,7 @@ print("Merged shape:", merged_heads.shape)
 
 
 # Select the first block's attention output projection.
-output_projection=model.transformer.h[0].attn.c_proj
+output_projection=block.attn.c_proj
 
 #Merged heads          Projection weights       Output
 #[1, 4, 768]      @       [768, 768]       →   [1, 4, 768]
@@ -167,7 +173,7 @@ print("After attention residual:", x.shape)
 
 #second layernorm
 
-ln2=model.transformer.h[0].ln_2
+ln2=block.ln_2
 with torch.no_grad():
     normalized_x=layer_norm(x,ln2.weight,ln2.bias,ln2.eps)
 
@@ -175,7 +181,7 @@ print("After ln_2: " , normalized_x.shape)
 
 
 #The MLP (multilayer perceptron) transforms each token’s features independently. Unlike attention, it doesn’t mix information between token rows
-fc=model.transformer.h[0].mlp.c_fc
+fc=block.mlp.c_fc
 
 with torch.no_grad():
     #Transform each token's 768 features into 3072
@@ -193,7 +199,7 @@ with torch.no_grad():
 print("After GELU: ", activated.shape)
 
 #project back 3072-> 768 
-mlp_projection = model.transformer.h[0].mlp.c_proj
+mlp_projection = block.mlp.c_proj
 
 with torch.no_grad():
     mlp_output=activated @ mlp_projection.weight +mlp_projection.bias
