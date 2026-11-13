@@ -71,7 +71,7 @@ print("Maximum difference",difference)
 #@ means matrix multiplication
 qkv=normalized_x @ projection.weight+projection.bias
 
-q,k,v=qkv.split(768,dim=1)
+q,k,v=qkv.split(768,dim=-1)
 
 
 print("Q",q.shape)
@@ -123,7 +123,7 @@ scores=scores.masked_fill(~mask,float("-inf"))
 #after the q @k.T multiplication the tensors transform into [1,12,4,64] to [1,12,4,4] 
 # the softmax raises each score[i,j] to e^score[i,j] and adds them and divides of each of them by total 
 # softmax returns each of the numbers between 0 and 1 ,which sums up to 1 per row  
-attention_weights=torch.softmax[scores,dim=-1]
+attention_weights=torch.softmax(scores,dim=-1)
 
 #now the output
 with torch.no_grad():
@@ -144,4 +144,79 @@ merged_heads=merged_heads.reshape(batch_size,num_tokens,768)
 print("Merged shape:", merged_heads.shape)
 
 
+# Select the first block's attention output projection.
+output_projection=model.transformer.h[0].attn.c_proj
 
+#Merged heads          Projection weights       Output
+#[1, 4, 768]      @       [768, 768]       →   [1, 4, 768]
+
+
+with torch.no_grad():
+    attention_output=(merged_heads@output_projection.weight+output_projection.bias)
+
+print("Attention output shape:", attention_output.shape)
+
+
+#add the residual connection before we performed the layernorm
+with torch.no_grad():   
+    x=x+attention_output
+
+
+print("After attention residual:", x.shape)
+
+
+#second layernorm
+
+ln2=model.transformer.h[0].ln_2
+with torch.no_grad():
+    normalized_x=layer_norm(x,ln2.weight,ln2.bias,ln2.eps)
+
+print("After ln_2: " , normalized_x.shape)
+
+
+#The MLP (multilayer perceptron) transforms each token’s features independently. Unlike attention, it doesn’t mix information between token rows
+fc=model.transformer.h[0].mlp.c_fc
+
+with torch.no_grad():
+    #Transform each token's 768 features into 3072
+    expanded=normalized_x@fc.weight+fc.bias
+
+print("Expanded shape ", expanded.shape)
+
+#GELU transforms each number in expanded individually. It keeps large positive values almost unchanged and pushes large negative values close to zero.
+#GELU adds a non-linear transformation which helps learn more complex realtionship between features
+
+with torch.no_grad():
+    # Apply GPT-2's GELU activation to each feature independently.
+    activated=torch.nn.functional.gelu(expanded,approximate="tanh")
+
+print("After GELU: ", activated.shape)
+
+#project back 3072-> 768 
+mlp_projection = model.transformer.h[0].mlp.c_proj
+
+with torch.no_grad():
+    mlp_output=activated @ mlp_projection.weight +mlp_projection.bias
+
+#second residual
+with torch.no_grad():
+    x=x+mlp_output 
+
+print("X shape after adding the second residual ", x.shape)
+
+
+with torch.no_grad():
+    # Run Hugging Face's model and collect its intermediate representations.
+    reference = model(
+        input_ids,
+        output_hidden_states=True,
+        use_cache=False,
+    )
+
+    # Entry 0 is the embeddings; entry 1 is the first block's output.
+    expected = reference.hidden_states[1]
+
+    # Find the largest absolute difference from our manual output.
+    difference = (x - expected).abs().max()
+
+print("First block maximum difference:", difference.item())
