@@ -86,6 +86,17 @@ with torch.no_grad():
 # Decode the prompt and all 20 new tokens.
 print("Generated text:", tokenizer.decode(generated_ids[0].tolist()))
 
+# Start Hugging Face from the same original prompt.
+hf_ids = input_ids.clone()
+
+with torch.no_grad():
+    for step in range(20):
+        logits = model(hf_ids, use_cache=False).logits
+        next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+        hf_ids = torch.cat([hf_ids, next_token], dim=1)
+
+print("HF text:", tokenizer.decode(hf_ids[0].tolist()))
+print("All token IDs match:", torch.equal(generated_ids, hf_ids))
 
 
 
@@ -97,4 +108,31 @@ print("Our next token:", our_next, repr(tokenizer.decode([our_next])))
 print("HF next token: ", expected_next, repr(tokenizer.decode([expected_next])))
 print("Next tokens match:", our_next == expected_next)
 
+# Copy the original prompt so we don't modify input_ids.
+changed_ids = input_ids.clone()
 
+
+#causal-mask check
+changed_ids[0,-1]=changed_ids[0,-1]+1 % model.config.vocab_size
+
+
+# Run our implementation on both sequences.
+original_logits = gpt2_forward(input_ids, model)
+changed_logits = gpt2_forward(changed_ids, model)
+
+
+# Compare every position EXCEPT the last, which we changed.
+#[:, :-1, :] means all batches, all positions except the last, and all vocabulary scores.
+earlier_original = original_logits[:, :-1, :]
+earlier_changed = changed_logits[:, :-1, :]
+
+difference = (earlier_original - earlier_changed).abs().max().item()
+last_difference = (original_logits[:, -1, :] - changed_logits[:, -1, :]).abs().max().item()
+print("Last position changed:", last_difference > 0)
+
+
+print("Earlier positions' maximum difference:", difference)
+print(
+    "Causal mask check:",
+    torch.allclose(earlier_original, earlier_changed, atol=1e-5, rtol=0),
+)
