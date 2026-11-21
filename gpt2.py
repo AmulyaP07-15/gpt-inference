@@ -1,5 +1,13 @@
 import torch
+from functools import lru_cache
+from pathlib import Path
 
+@lru_cache(maxsize=1)
+def load_matmul_extension():
+    from torch.utils.cpp_extension import load
+
+    source=Path(__file__).resolve().parent/"kernels"/"matmul.cu"
+    return load(name="my_matmul",sources=[str(source)],verbose=True)
 
 def layer_norm(x, weight, bias, eps=1e-5):
     mean = x.mean(dim=-1, keepdim=True)
@@ -54,7 +62,14 @@ def transformer_block(x, block):
 
     # MLP expansion, GELU and projection.
     fc = block.mlp.c_fc
-    expanded = normalized_x @ fc.weight + fc.bias
+    if normalized_x.is_cuda and normalized_x.dtype==fc.weight.dtype==torch.float32:
+        rows=normalized_x.reshape(batch_size*num_tokens,hidden_size).contiguous()
+        projected=load_matmul_extension().matmul(rows,fc.weight.contiguous())
+        expanded = projected.reshape(batch_size,num_tokens,-1)+ fc.bias
+
+    else:
+        expanded=normalized_x@fc.weight+fc.bias
+
     activated = torch.nn.functional.gelu(expanded, approximate="tanh")
 
     mlp_projection = block.mlp.c_proj
